@@ -79,10 +79,11 @@ class ArithmeticStrategy(MutationStrategy):
         sizes = [1, 2, 4]  # Try 8-bit, 16-bit, and 32-bit values
 
         for size in sizes:
-            for i in range(0, data_len - size + 1):
-                # Consider both signed and unsigned interpretations
-                numeric_values.append((i, size, False))  # unsigned
-                numeric_values.append((i, size, True))   # signed
+            if size <= data_len:
+                for i in range(0, data_len - size + 1):
+                    # Consider both signed and unsigned interpretations
+                    numeric_values.append((i, size, False))  # unsigned
+                    numeric_values.append((i, size, True))   # signed
 
         # Remove positions that would overlap and randomly sample
         if len(numeric_values) > 20:
@@ -266,9 +267,10 @@ class IntegerBoundaryStrategy(MutationStrategy):
         sizes = [1, 2, 4]
 
         for size in sizes:
-            for i in range(0, len(data) - size + 1):
-                integers.append((i, size, False))  # unsigned
-                integers.append((i, size, True))   # signed
+            if size <= len(data):
+                for i in range(0, len(data) - size + 1):
+                    integers.append((i, size, False))  # unsigned
+                    integers.append((i, size, True))   # signed
 
         # Sample to avoid too many positions
         if len(integers) > 15:
@@ -368,11 +370,13 @@ class FloatingPointStrategy(MutationStrategy):
         # Look for 32-bit and 64-bit floating-point patterns
         positions = []
 
-        for i in range(0, len(data) - 3):
-            positions.append((i, 4))  # 32-bit float
+        if len(data) >= 4:
+            for i in range(0, len(data) - 3):
+                positions.append((i, 4))  # 32-bit float
 
-        for i in range(0, len(data) - 7):
-            positions.append((i, 8))  # 64-bit double
+        if len(data) >= 8:
+            for i in range(0, len(data) - 7):
+                positions.append((i, 8))  # 64-bit double
 
         if positions:
             pos, size = random.choice(positions)

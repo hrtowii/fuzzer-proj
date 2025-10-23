@@ -85,16 +85,25 @@ class CSVMutator(BaseMutator):
             ]
         )
 
+        result = None
+
         if mutation_type == "field_mutation":
-            return self._mutate_fields()
+            result = self._mutate_fields()
         elif mutation_type == "row_mutation":
-            return self._mutate_rows()
+            result = self._mutate_rows()
         elif mutation_type == "structure_mutation":
-            return self._mutate_structure()
+            result = self._mutate_structure()
         elif mutation_type == "delimiter_mutation":
-            return self._mutate_delimiters()
+            result = self._mutate_delimiters()
         else:  # encoding_mutation
-            return self._mutate_encoding()
+            result = self._mutate_encoding()
+
+        # Ensure minimum size to prevent issues with strategies
+        if result and len(result) < 2:
+            # If result is too small, return original data
+            return self.original_data
+
+        return result
 
     def _mutate_fields(self) -> bytes:
         """Mutate individual fields within the CSV."""
@@ -106,7 +115,8 @@ class CSVMutator(BaseMutator):
         for row in self._data_rows:
             mutated_row = row.copy()
 
-            num_mutations = self.random.randint(1, min(3, len(mutated_row)))
+            max_mutations = max(1, min(3, len(mutated_row)))
+            num_mutations = self.random.randint(1, max_mutations)
 
             for _ in range(num_mutations):
                 if mutated_row:

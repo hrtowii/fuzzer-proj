@@ -432,7 +432,8 @@ class DictionaryStrategy(MutationStrategy):
         if not values:
             values = ['value1', 'value2', 'value3']
 
-        num_fields = random.randint(1, min(5, len(keys), len(values)))
+        max_fields = max(1, min(5, len(keys), len(values)))
+        num_fields = random.randint(1, max_fields)
         fields = []
 
         for i in range(num_fields):

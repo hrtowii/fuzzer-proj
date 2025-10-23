@@ -69,7 +69,8 @@ class StructureModificationStrategy(MutationStrategy):
         )
 
         if strategy == "early_truncate":
-            truncate_point = random.randint(1, min(len(data) // 4, 10))
+            max_truncate = max(1, min(len(data) // 4, 10))
+            truncate_point = random.randint(1, max_truncate)
         elif strategy == "late_truncate":
             truncate_point = random.randint(max(1, len(data) - 10), len(data) - 1)
         elif strategy == "middle_truncate":
@@ -294,10 +295,12 @@ class StructureModificationStrategy(MutationStrategy):
         else:  # corrupt_boundaries
             # Corrupt boundary bytes
             result = bytearray(data)
-            corruption_count = random.randint(1, min(10, len(result) // 10))
+            max_corruptions = max(1, min(10, len(result) // 10))
+            corruption_count = random.randint(1, max_corruptions)
             for _ in range(corruption_count):
-                pos = random.randint(0, len(result) - 1)
-                result[pos] = random.randint(0, 255)
+                if len(result) > 0:
+                    pos = random.randint(0, len(result) - 1)
+                    result[pos] = random.randint(0, 255)
             return bytes(result)
 
     def _generate_random_structure(self) -> bytes:

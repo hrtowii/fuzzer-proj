@@ -64,11 +64,11 @@ Examples:
         help="Timeout in seconds for each execution (default: 5)",
     )
     parser.add_argument(
-        "--processes",
+        "--threads",
         "-p",
         type=int,
-        default=1,
-        help="Number of parallel processes (default: 1)",
+        default=16,
+        help="Number of parallel threads per binary (default: 16)",
     )
     parser.add_argument(
         "--max-file-size",
@@ -90,16 +90,7 @@ Examples:
         metavar="DIR",
         help="Save crashing inputs to specified directory",
     )
-    parser.add_argument(
-        "--report", type=str, help="Save fuzzing report to specified file"
-    )
-
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--quiet", "-q", action="store_true", help="Suppress non-error output"
-    )
+  
     parser.add_argument(
         "--preserve-files",
         action="store_true",
@@ -145,8 +136,8 @@ def validate_arguments(args: argparse.Namespace) -> bool:
         print("Error: Timeout must be positive")
         return False
 
-    if args.processes <= 0:
-        print("Error: Number of processes must be positive")
+    if args.threads <= 0:
+        print("Error: Number of threads must be positive")
         return False
 
     if args.max_file_size <= 0:
@@ -195,8 +186,14 @@ def match_binaries_to_inputs(
     matches = []
 
     for binary in binaries:
+        binary_name = Path(binary).name
+        expected_input = f"{binary_name}.txt"
+
+        # Look for the corresponding .txt file
         for input_file in inputs:
-            matches.append((binary, input_file))
+            if Path(input_file).name == expected_input:
+                matches.append((binary, input_file))
+                break
 
     return matches
 
@@ -220,16 +217,12 @@ def main():
     if not validate_arguments(args):
         sys.exit(1)
 
-    verbose = args.verbose and not args.quiet
-    quiet = args.quiet
-
     config = FuzzerConfig(
         max_mutations_per_file=args.mutations,
         timeout_per_execution=args.timeout,
-        parallel_processes=args.processes,
+        parallel_threads=args.threads,
         max_file_size=args.max_file_size,
         output_directory=args.output,
-        verbose=verbose,
         preserve_working_files=args.preserve_files,
     )
 
@@ -268,42 +261,17 @@ def main():
 
             sessions = fuzzer.fuzz_multiple_binaries(binary_input_pairs)
 
-        if not quiet:
-            report = fuzzer.generate_report(sessions)
-            print("\n" + report)
+        # Always save crashes to fuzzeroutput directory
+        fuzzer.save_crashing_inputs(sessions, args.output)
 
-            if args.report:
-                try:
-                    with open(args.report, "w") as f:
-                        f.write(report)
-                    print(f"Report saved to: {args.report}")
-                except Exception as e:
-                    print(f"Error saving report: {e}")
-
-            if args.save_crashes:
-                fuzzer.save_crashing_inputs(sessions, args.save_crashes)
-
-        total_crashes = sum(
-            session.stats.crashes_found for session in sessions.values()
-        )
-        if total_crashes > 0:
-            print(f"\n🚨 Found {total_crashes} crashes! Vulnerabilities detected.")
-            sys.exit(1)  # Exit with error code to indicate crashes found
-        else:
-            print(
-                f"\n✅ No crashes found. Binaries appear robust against tested mutations."
-            )
-            sys.exit(0)
+        if args.save_crashes:
+            fuzzer.save_crashing_inputs(sessions, args.save_crashes)
 
     except KeyboardInterrupt:
         print("\nFuzzing interrupted by user.")
         sys.exit(130)  # Standard exit code for SIGINT
     except Exception as e:
         print(f"Error during fuzzing: {e}")
-        if verbose:
-            import traceback
-
-            traceback.print_exc()
         sys.exit(1)
 
 

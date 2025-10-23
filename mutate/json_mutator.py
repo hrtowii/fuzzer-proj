@@ -47,18 +47,27 @@ class JSONMutator(BaseMutator):
             'malformed_json'
         ])
 
+        result = None
+
         if mutation_type == 'value_mutation':
-            return self._mutate_values()
+            result = self._mutate_values()
         elif mutation_type == 'structure_mutation':
-            return self._mutate_structure()
+            result = self._mutate_structure()
         elif mutation_type == 'type_mutation':
-            return self._mutate_types()
+            result = self._mutate_types()
         elif mutation_type == 'size_mutation':
-            return self._mutate_size()
+            result = self._mutate_size()
         elif mutation_type == 'encoding_mutation':
-            return self._mutate_encoding()
+            result = self._mutate_encoding()
         else:  # malformed_json
-            return self._create_malformed_json()
+            result = self._create_malformed_json()
+
+        # Ensure minimum size to prevent issues with strategies
+        if result and len(result) < 2:
+            # If result is too small, return original data
+            return self.original_data
+
+        return result
 
     def _mutate_values(self) -> bytes:
         """Mutate individual values within the JSON."""
@@ -79,7 +88,8 @@ class JSONMutator(BaseMutator):
             # Mutate a random subset of values
             keys = list(obj.keys())
             self.random.shuffle(keys)
-            num_to_mutate = self.random.randint(1, min(3, len(keys)))
+            max_mutate = max(1, min(3, len(keys)))
+            num_to_mutate = self.random.randint(1, max_mutate)
 
             for key in keys[:num_to_mutate]:
                 if isinstance(obj[key], (dict, list)):

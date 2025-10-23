@@ -64,13 +64,12 @@ class FuzzerConfig(BaseModel):
     """Configuration for the fuzzer."""
     max_mutations_per_file: int = Field(default=1000, ge=1)
     timeout_per_execution: int = Field(default=5, ge=1)
-    parallel_processes: int = Field(default=4, ge=1)
+    parallel_threads: int = Field(default=16, ge=1)
     enable_coverage: bool = Field(default=False)
     max_file_size: int = Field(default=1024 * 1024, ge=1)  # 1MB default
     min_file_size: int = Field(default=0, ge=0)
     preserve_working_files: bool = Field(default=False)
     output_directory: str = Field(default="./fuzzer_output")
-    verbose: bool = Field(default=False)
 
 
 class MutationStats(BaseModel):

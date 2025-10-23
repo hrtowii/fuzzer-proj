@@ -59,7 +59,10 @@ class Harness:
             )
 
             try:
-                stdout, stderr = process.communicate(input=input_data, timeout=self.timeout)
+                stdout, stderr = process.communicate(
+                    input=input_data, timeout=self.timeout
+                )
+                # print(stdout)
                 execution_time = time.time() - start_time
                 return_code = process.returncode
 
@@ -114,7 +117,9 @@ class Harness:
             except:
                 pass
 
-    def _analyze_crash(self, return_code: int, stderr: bytes, execution_time: float) -> Optional[CrashInfo]:
+    def _analyze_crash(
+        self, return_code: int, stderr: bytes, execution_time: float
+    ) -> Optional[CrashInfo]:
         """
         Analyze execution results to determine if a crash occurred.
 
@@ -138,20 +143,20 @@ class Harness:
                 )
 
         # Check stderr for crash patterns
-        stderr_str = stderr.decode('utf-8', errors='ignore').lower()
+        stderr_str = stderr.decode("utf-8", errors="ignore").lower()
 
         crash_patterns = {
-            'segmentation fault': CrashType.SEGFAULT,
-            'segfault': CrashType.SEGFAULT,
-            'abort': CrashType.ABORT,
-            'assertion': CrashType.ABORT,
-            'buffer overflow': CrashType.BUFFER_OVERFLOW,
-            'stack overflow': CrashType.BUFFER_OVERFLOW,
-            'heap overflow': CrashType.BUFFER_OVERFLOW,
-            'use after free': CrashType.USE_AFTER_FREE,
-            'double free': CrashType.DOUBLE_FREE,
-            'invalid read': CrashType.INVALID_READ,
-            'invalid write': CrashType.INVALID_WRITE,
+            "segmentation fault": CrashType.SEGFAULT,
+            "segfault": CrashType.SEGFAULT,
+            "abort": CrashType.ABORT,
+            "assertion": CrashType.ABORT,
+            "buffer overflow": CrashType.BUFFER_OVERFLOW,
+            "stack overflow": CrashType.BUFFER_OVERFLOW,
+            "heap overflow": CrashType.BUFFER_OVERFLOW,
+            "use after free": CrashType.USE_AFTER_FREE,
+            "double free": CrashType.DOUBLE_FREE,
+            "invalid read": CrashType.INVALID_READ,
+            "invalid write": CrashType.INVALID_WRITE,
         }
 
         for pattern, crash_type in crash_patterns.items():
@@ -162,7 +167,10 @@ class Harness:
                 )
 
         # Check for common crash signals in output
-        if any(signal_name in stderr_str for signal_name in ['sigsegv', 'sigabrt', 'sigbus', 'sigfpe']):
+        if any(
+            signal_name in stderr_str
+            for signal_name in ["sigsegv", "sigabrt", "sigbus", "sigfpe"]
+        ):
             return CrashInfo(
                 signal=0,
                 crash_type=CrashType.UNKNOWN,
@@ -183,11 +191,12 @@ class Harness:
 
     def _extract_signal_from_stderr(self, stderr: bytes) -> Optional[int]:
         """Try to extract signal number from stderr output."""
-        stderr_str = stderr.decode('utf-8', errors='ignore')
+        stderr_str = stderr.decode("utf-8", errors="ignore")
 
         # Look for patterns like "terminated by signal SIGSEGV (11)"
         import re
-        signal_match = re.search(r'signal \w+ \((\d+)\)', stderr_str)
+
+        signal_match = re.search(r"signal \w+ \((\d+)\)", stderr_str)
         if signal_match:
             return int(signal_match.group(1))
 
@@ -211,7 +220,10 @@ class Harness:
             # Try to run binary with empty input to see if it crashes immediately
             result = self.execute(b"")
             if result.crashed and result.crash_type == CrashType.SEGFAULT:
-                return False, "Binary crashes immediately with empty input - may not be suitable for fuzzing"
+                return (
+                    False,
+                    "Binary crashes immediately with empty input - may not be suitable for fuzzing",
+                )
 
             return True, "Binary appears suitable for fuzzing"
 
@@ -235,10 +247,18 @@ class Harness:
                 return False, f"Sample input causes crash: {result.crash_type}"
 
             if result.return_code != 0:
-                return False, f"Sample input returns non-zero exit code: {result.return_code}"
+                return (
+                    False,
+                    f"Sample input returns non-zero exit code: {result.return_code}",
+                )
 
-            if result.execution_time > self.timeout * 0.8:  # Use 80% of timeout as threshold
-                return False, f"Sample input takes too long to execute: {result.execution_time:.2f}s"
+            if (
+                result.execution_time > self.timeout * 0.8
+            ):  # Use 80% of timeout as threshold
+                return (
+                    False,
+                    f"Sample input takes too long to execute: {result.execution_time:.2f}s",
+                )
 
             return True, "Dry run successful - binary processes sample input normally"
 

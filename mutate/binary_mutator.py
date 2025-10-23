@@ -34,34 +34,46 @@ class BinaryMutator(BaseMutator):
         Returns:
             Mutated binary data
         """
+        result = None
+
         # Use format-specific mutator if available
         if self.input_format in self._format_specific_mutators:
-            return self._format_specific_mutators[self.input_format]()
+            result = self._format_specific_mutators[self.input_format]()
+        else:
+            # Generic binary mutations
+            mutation_type = self.random.choice(
+                [
+                    "byte_bit_flips",
+                    "arithmetic_mutations",
+                    "insertion_deletion",
+                    "boundary_mutations",
+                    "magic_number_mutation",
+                    "structure_aware_mutation",
+                ]
+            )
 
-        # Generic binary mutations
-        mutation_type = self.random.choice(
-            [
-                "byte_bit_flips",
-                "arithmetic_mutations",
-                "insertion_deletion",
-                "boundary_mutations",
-                "magic_number_mutation",
-                "structure_aware_mutation",
-            ]
-        )
+            if mutation_type == "byte_bit_flips":
+                result = self._byte_bit_flip_mutation()
+            elif mutation_type == "arithmetic_mutations":
+                result = self._arithmetic_mutation()
+            elif mutation_type == "insertion_deletion":
+                result = self._insertion_deletion_mutation()
+            elif mutation_type == "boundary_mutations":
+                result = self._boundary_mutation()
+            elif mutation_type == "magic_number_mutation":
+                result = self._magic_number_mutation()
+            else:  # structure_aware_mutation
+                result = self._structure_aware_mutation()
 
-        if mutation_type == "byte_bit_flips":
-            return self._byte_bit_flip_mutation()
-        elif mutation_type == "arithmetic_mutations":
-            return self._arithmetic_mutation()
-        elif mutation_type == "insertion_deletion":
-            return self._insertion_deletion_mutation()
-        elif mutation_type == "boundary_mutations":
-            return self._boundary_mutation()
-        elif mutation_type == "magic_number_mutation":
-            return self._magic_number_mutation()
-        else:  # structure_aware_mutation
-            return self._structure_aware_mutation()
+        # Ensure minimum size to prevent issues with strategies
+        if result and len(result) < 2:
+            # If result is too small, pad with original data or return original
+            if len(self.current_data) >= 2:
+                return self.current_data[:2]
+            else:
+                return self.current_data
+
+        return result
 
     def _mutate_jpeg(self) -> bytes:
         """Apply JPEG-specific mutations."""
@@ -888,8 +900,12 @@ class BinaryMutator(BaseMutator):
 
         result = bytearray(self.current_data)
 
+        if len(result) < 4:
+            return self.current_data
+
         # Find a pattern to repeat
-        pattern_length = self.random.randint(2, 8)
+        max_pattern_length = min(8, max(2, len(result) // 2))
+        pattern_length = self.random.randint(2, max_pattern_length)
         pattern_start = self.random.randint(0, len(result) - pattern_length)
         pattern = result[pattern_start : pattern_start + pattern_length]
 
@@ -909,7 +925,11 @@ class BinaryMutator(BaseMutator):
             return self.current_data
 
         result = bytearray(self.current_data)
-        chunk_size = self.random.randint(2, min(16, len(result) // 4))
+
+        if len(result) < 8:
+            return self.current_data
+
+        chunk_size = self.random.randint(2, min(16, max(2, len(result) // 4)))
 
         # Find two chunks to swap
         chunk1_start = self.random.randint(0, len(result) - chunk_size)

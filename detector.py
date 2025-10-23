@@ -41,18 +41,26 @@ class InputDetector:
         except Exception as e:
             raise ValueError(f"Could not read sample file: {e}")
 
+        # Debug: print content info
+        content_str = content.decode("utf-8", errors="ignore")
+        print(f"[DEBUG] File: {file_path.name}, Content: {repr(content_str[:50])}, Extension: {file_path.suffix}")
+
         format_result = self._detect_by_magic_numbers(content)
         if format_result:
+            print(f"[DEBUG] Detected by magic numbers: {format_result}")
             return format_result
 
         format_result = self._detect_by_content(content, file_path.suffix)
         if format_result:
+            print(f"[DEBUG] Detected by content: {format_result}")
             return format_result
 
         format_result = self._detect_by_extension(file_path.suffix)
         if format_result:
+            print(f"[DEBUG] Detected by extension: {format_result}")
             return format_result
 
+        print(f"[DEBUG] Defaulting to PLAINTEXT")
         return InputFormat.PLAINTEXT
 
     def _detect_by_magic_numbers(self, content: bytes) -> Optional[InputFormat]:
@@ -82,10 +90,17 @@ class InputDetector:
                 json.loads(content_str)
                 return InputFormat.JSON
 
-            # Try XML
-            if content_str.startswith(("<", "<?xml")):
-                ET.fromstring(content_str)
-                return InputFormat.XML
+            # Try XML (only valid XML)
+            if content_str.startswith("<?xml") or (
+                content_str.startswith("<") and
+                content_str.find(">") > 1 and
+                content_str.find("</") > content_str.find(">")  # Has closing tag
+            ):
+                try:
+                    ET.fromstring(content_str)
+                    return InputFormat.XML
+                except ET.ParseError:
+                    pass  # Not valid XML, continue to other detection
 
             # Try CSV (heuristic detection)
             if self._looks_like_csv(content_str):
