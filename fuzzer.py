@@ -37,7 +37,7 @@ def execute_mutation_worker(
     binary_path: str,
     mutation_data: bytes,
     timeout_per_execution: int,
-    mutation_description: str
+    mutation_description: str,
 ) -> Dict[str, Any]:
     """
     Worker function that executes a single mutation in a separate process.
@@ -55,31 +55,33 @@ def execute_mutation_worker(
 
     try:
         # Debug: Print first 20 bytes of received mutation data (only for first few calls)
-        if hasattr(execute_mutation_worker, 'call_count'):
+        if hasattr(execute_mutation_worker, "call_count"):
             execute_mutation_worker.call_count += 1
         else:
             execute_mutation_worker.call_count = 1
 
         if execute_mutation_worker.call_count <= 3:
-            print(f"[DEBUG] Worker {execute_mutation_worker.call_count}: {mutation_data[:20]}... (len={len(mutation_data)})")
+            print(
+                f"[DEBUG] Worker {execute_mutation_worker.call_count}: {mutation_data[:20]}... (len={len(mutation_data)})"
+            )
 
         harness = Harness(binary_path, timeout_per_execution)
         execution_result = harness.execute(mutation_data)
 
         return {
-            'success': True,
-            'input_data': mutation_data,
-            'execution_result': execution_result,
-            'mutation_description': mutation_description,
-            'input_size': len(mutation_data),
-            'is_crash': execution_result.crashed,
+            "success": True,
+            "input_data": mutation_data,
+            "execution_result": execution_result,
+            "mutation_description": mutation_description,
+            "input_size": len(mutation_data),
+            "is_crash": execution_result.crashed,
         }
     except Exception as e:
         return {
-            'success': False,
-            'error': str(e),
-            'mutation_description': mutation_description,
-            'input_size': len(mutation_data) if mutation_data else 0,
+            "success": False,
+            "error": str(e),
+            "mutation_description": mutation_description,
+            "input_size": len(mutation_data) if mutation_data else 0,
         }
 
 
@@ -228,16 +230,20 @@ class Fuzzer:
         unique_crash_count = 0
 
         # Thread-safe counters and result collection
-        mutation_counter = {'value': 0}
-        crash_counter = {'value': 0}
-        unique_crash_counter = {'value': 0}
+        mutation_counter = {"value": 0}
+        crash_counter = {"value": 0}
+        unique_crash_counter = {"value": 0}
         result_lock = threading.Lock()
 
-        print(f"[{self.session.session_id}] Running parallel fuzzing for {max_execution_time} seconds...")
+        print(
+            f"[{self.session.session_id}] Running parallel fuzzing for {max_execution_time} seconds..."
+        )
 
         # Determine optimal number of worker threads for no-GIL Python 3.14
         # Use 2x CPU cores for maximum parallelism with no-GIL
-        max_workers = min(self.config.parallel_threads, 16)  # Cap at 16 threads per binary for 8-core system
+        max_workers = min(
+            self.config.parallel_threads, 16
+        )  # Cap at 16 threads per binary for 8-core system
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = []
@@ -251,7 +257,9 @@ class Fuzzer:
                 # Generate mutations and submit to workers
                 try:
                     # Submit larger mutation batches for no-GIL threading (more efficient than processes)
-                    batch_size = max_workers * 4  # Larger batches for better thread utilization
+                    batch_size = (
+                        max_workers * 4
+                    )  # Larger batches for better thread utilization
 
                     for _ in range(batch_size):
                         if (time.time() - start_time) >= max_execution_time:
@@ -259,19 +267,16 @@ class Fuzzer:
 
                         try:
                             mutated_data = mutator.mutate()
-                            mutation_description = mutator.generate_mutation_description()
+                            mutation_description = (
+                                mutator.generate_mutation_description()
+                            )
 
-                            # Debug: Print first 20 bytes of mutation data for first few mutations
-                            if mutation_count < 5:
-                                print(f"[DEBUG] Mutation {mutation_count + 1}: {mutated_data[:20]}... (len={len(mutated_data)})")
-
-                            # Submit mutation to worker process
                             future = executor.submit(
                                 execute_mutation_worker,
                                 self.session.binary_path,
                                 mutated_data,
                                 self.config.timeout_per_execution,
-                                mutation_description
+                                mutation_description,
                             )
                             futures.append(future)
 
@@ -290,48 +295,68 @@ class Fuzzer:
                             result = future.result()
 
                             with result_lock:
-                                mutation_counter['value'] += 1
-                                mutation_count = mutation_counter['value']
+                                mutation_counter["value"] += 1
+                                mutation_count = mutation_counter["value"]
 
-                            if result['success']:
-                                execution_result = result['execution_result']
+                            if result["success"]:
+                                execution_result = result["execution_result"]
 
                                 fuzz_result = FuzzResult(
-                                    input_data=result['input_data'],
+                                    input_data=result["input_data"],
                                     execution_result=execution_result,
-                                    mutation_description=result['mutation_description'],
-                                    input_size=result['input_size'],
-                                    is_crash=result['is_crash'],
+                                    mutation_description=result["mutation_description"],
+                                    input_size=result["input_size"],
+                                    is_crash=result["is_crash"],
                                     is_unique_crash=False,
                                 )
 
                                 if execution_result.crashed:
                                     with result_lock:
-                                        crash_counter['value'] += 1
-                                        crash_count = crash_counter['value']
+                                        crash_counter["value"] += 1
+                                        crash_count = crash_counter["value"]
 
-                                    crash_signature = self._generate_crash_signature(execution_result)
+                                    crash_signature = self._generate_crash_signature(
+                                        execution_result
+                                    )
 
                                     if crash_signature not in self.crash_signatures:
                                         with result_lock:
                                             self.crash_signatures.add(crash_signature)
-                                            unique_crash_counter['value'] += 1
-                                            unique_crash_count = unique_crash_counter['value']
+                                            unique_crash_counter["value"] += 1
+                                            unique_crash_count = unique_crash_counter[
+                                                "value"
+                                            ]
                                             fuzz_result.is_unique_crash = True
 
-                                        print(f"[{self.session.session_id}] 🚨 UNIQUE CRASH FOUND!")
-                                        print(f"    Mutation: {fuzz_result.mutation_description}")
-                                        print(f"    Crash type: {execution_result.crash_type}")
-                                        print(f"    Return code: {execution_result.return_code}")
-                                        print(f"[{self.session.session_id}] Stopping fuzzing after finding 1 unique crash")
+                                        print(
+                                            f"[{self.session.session_id}] 🚨 UNIQUE CRASH FOUND!"
+                                        )
+                                        print(
+                                            f"    Mutation: {fuzz_result.mutation_description}"
+                                        )
+                                        print(
+                                            f"    Crash type: {execution_result.crash_type}"
+                                        )
+                                        print(
+                                            f"    Return code: {execution_result.return_code}"
+                                        )
+                                        print(
+                                            f"[{self.session.session_id}] Stopping fuzzing after finding 1 unique crash"
+                                        )
                                         break
                                     else:
-                                        if mutation_count % 10 == 0:  # Reduce duplicate crash spam
-                                            print(f"[{self.session.session_id}] 💥 Crash found (duplicate)")
+                                        if (
+                                            mutation_count % 10 == 0
+                                        ):  # Reduce duplicate crash spam
+                                            print(
+                                                f"[{self.session.session_id}] 💥 Crash found (duplicate)"
+                                            )
 
                                 self.session.add_result(fuzz_result)
                             else:
-                                print(f"Error in worker process: {result.get('error', 'Unknown error')}")
+                                print(
+                                    f"Error in worker process: {result.get('error', 'Unknown error')}"
+                                )
 
                         except Exception as e:
                             print(f"Error processing future result: {e}")
@@ -361,36 +386,40 @@ class Fuzzer:
             # Wait for any remaining futures to complete
             for future in futures:
                 try:
-                    result = future.result(timeout=self.config.timeout_per_execution + 5)
+                    result = future.result(
+                        timeout=self.config.timeout_per_execution + 5
+                    )
 
-                    if result['success']:
+                    if result["success"]:
                         with result_lock:
-                            mutation_counter['value'] += 1
-                            mutation_count = mutation_counter['value']
+                            mutation_counter["value"] += 1
+                            mutation_count = mutation_counter["value"]
 
-                        execution_result = result['execution_result']
+                        execution_result = result["execution_result"]
 
                         fuzz_result = FuzzResult(
-                            input_data=result['input_data'],
+                            input_data=result["input_data"],
                             execution_result=execution_result,
-                            mutation_description=result['mutation_description'],
-                            input_size=result['input_size'],
-                            is_crash=result['is_crash'],
+                            mutation_description=result["mutation_description"],
+                            input_size=result["input_size"],
+                            is_crash=result["is_crash"],
                             is_unique_crash=False,
                         )
 
                         if execution_result.crashed:
                             with result_lock:
-                                crash_counter['value'] += 1
-                                crash_count = crash_counter['value']
+                                crash_counter["value"] += 1
+                                crash_count = crash_counter["value"]
 
-                            crash_signature = self._generate_crash_signature(execution_result)
+                            crash_signature = self._generate_crash_signature(
+                                execution_result
+                            )
 
                             if crash_signature not in self.crash_signatures:
                                 with result_lock:
                                     self.crash_signatures.add(crash_signature)
-                                    unique_crash_counter['value'] += 1
-                                    unique_crash_count = unique_crash_counter['value']
+                                    unique_crash_counter["value"] += 1
+                                    unique_crash_count = unique_crash_counter["value"]
                                     fuzz_result.is_unique_crash = True
 
                         self.session.add_result(fuzz_result)
@@ -511,7 +540,9 @@ class Fuzzer:
 
         # Determine optimal number of parallel binaries for no-GIL Python 3.14
         # Use more concurrent binaries with threading (no process overhead)
-        max_concurrent_binaries = min(len(binary_list), 8)  # Up to 8 binaries on 8-core system
+        max_concurrent_binaries = min(
+            len(binary_list), 8
+        )  # Up to 8 binaries on 8-core system
 
         with ThreadPoolExecutor(max_workers=max_concurrent_binaries) as executor:
             # Submit all binary fuzzing tasks
@@ -527,7 +558,9 @@ class Fuzzer:
                 completed_count += 1
 
                 print(f"\n{'=' * 60}")
-                print(f"Completed binary {completed_count}/{len(binary_list)}: {binary_path}")
+                print(
+                    f"Completed binary {completed_count}/{len(binary_list)}: {binary_path}"
+                )
                 print(f"{'=' * 60}")
 
                 if session:
@@ -538,8 +571,12 @@ class Fuzzer:
                     print(f"  Mutations: {session.stats.total_mutations}")
                     print(f"  Crashes: {session.stats.crashes_found}")
                     print(f"  Unique crashes: {session.stats.unique_crashes}")
-                    print(f"  Execution time: {session.stats.execution_time_total:.2f}s")
-                    print(f"  Average mutation rate: {session.stats.mutations_per_second:.1f} mutations/sec")
+                    print(
+                        f"  Execution time: {session.stats.execution_time_total:.2f}s"
+                    )
+                    print(
+                        f"  Average mutation rate: {session.stats.mutations_per_second:.1f} mutations/sec"
+                    )
                 else:
                     print(f"Error fuzzing {binary_path}: {error}")
 
@@ -550,7 +587,6 @@ class Fuzzer:
 
         return results
 
-    
     def save_crashing_inputs(
         self, sessions: Dict[str, FuzzerSession], output_dir: str
     ) -> None:
@@ -566,12 +602,16 @@ class Fuzzer:
         fuzzeroutput_path.mkdir(parents=True, exist_ok=True)
 
         for binary_path, session in sessions.items():
-            binary_name = Path(binary_path).stem  # Get just the filename without extension
+            binary_name = Path(
+                binary_path
+            ).stem  # Get just the filename without extension
             crash_results = [r for r in session.results if r.is_crash]
             unique_crash_results = [r for r in crash_results if r.is_unique_crash]
 
             # Only save unique crashes to avoid duplicates
-            crashes_to_save = unique_crash_results if unique_crash_results else crash_results
+            crashes_to_save = (
+                unique_crash_results if unique_crash_results else crash_results
+            )
             print(f"Saving {len(crashes_to_save)} crashing inputs for {binary_name}...")
 
             for i, crash in enumerate(crashes_to_save):
@@ -584,7 +624,9 @@ class Fuzzer:
 
                 try:
                     # Debug: Print first 20 bytes of crash data being saved
-                    print(f"[DEBUG] Saving crash {i+1}: {crash.input_data[:20]}... (len={len(crash.input_data)})")
+                    print(
+                        f"[DEBUG] Saving crash {i + 1}: {crash.input_data[:20]}... (len={len(crash.input_data)})"
+                    )
 
                     # Write crash input data as text (not binary)
                     with open(filepath, "wb") as f:
@@ -595,9 +637,7 @@ class Fuzzer:
 
         print(f"Crashing inputs saved to: {fuzzeroutput_path}")
 
-    
     def shutdown(self) -> None:
         """Shutdown the fuzzer gracefully."""
         print("Shutting down fuzzer...")
         self.shutdown_event.set()
-

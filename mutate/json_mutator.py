@@ -75,11 +75,11 @@ class JSONMutator(BaseMutator):
             return self.original_data
 
         mutated_json = self._deep_copy_json(self._parsed_json)
-        self._mutate_values_recursive(mutated_json, max_depth=5)
+        self._mutate_values_recursive(mutated_json, max_depth=3)
 
         return self._serialize_json(mutated_json)
 
-    def _mutate_values_recursive(self, obj: Any, depth: int = 0, max_depth: int = 5) -> None:
+    def _mutate_values_recursive(self, obj: Any, depth: int = 0, max_depth: int = 3) -> None:
         """Recursively mutate values in JSON structure."""
         if depth >= max_depth:
             return
@@ -139,25 +139,28 @@ class JSONMutator(BaseMutator):
             return self.original_data
 
         mutated_json = self._deep_copy_json(self._parsed_json)
-        self._mutate_types_recursive(mutated_json)
+        self._mutate_types_recursive(mutated_json, max_depth=3)
 
         return self._serialize_json(mutated_json)
 
-    def _mutate_types_recursive(self, obj: Any) -> None:
+    def _mutate_types_recursive(self, obj: Any, depth: int = 0, max_depth: int = 3) -> None:
         """Recursively mutate data types."""
+        if depth >= max_depth:
+            return
+
         if isinstance(obj, dict):
             for key in list(obj.keys()):
                 if self.random.random() < 0.3:  # 30% chance to mutate type
                     obj[key] = self._get_type_mutation(obj[key])
                 elif isinstance(obj[key], (dict, list)):
-                    self._mutate_types_recursive(obj[key])
+                    self._mutate_types_recursive(obj[key], depth + 1, max_depth)
 
         elif isinstance(obj, list):
             for i in range(len(obj)):
                 if self.random.random() < 0.3:  # 30% chance to mutate type
                     obj[i] = self._get_type_mutation(obj[i])
                 elif isinstance(obj[i], (dict, list)):
-                    self._mutate_types_recursive(obj[i])
+                    self._mutate_types_recursive(obj[i], depth + 1, max_depth)
 
     def _mutate_size(self) -> bytes:
         """Mutate the size of JSON structures."""
@@ -324,12 +327,15 @@ class JSONMutator(BaseMutator):
             return self.original_data
 
         mutated_json = self._deep_copy_json(self._parsed_json)
-        self._add_nested_objects_recursive(mutated_json)
+        self._add_nested_objects_recursive(mutated_json, max_depth=2)
 
         return self._serialize_json(mutated_json)
 
-    def _add_nested_objects_recursive(self, obj: Any) -> None:
+    def _add_nested_objects_recursive(self, obj: Any, depth: int = 0, max_depth: int = 2) -> None:
         """Recursively add nested objects."""
+        if depth >= max_depth:
+            return
+
         if isinstance(obj, dict):
             # Add a nested object with random probability
             if self.random.random() < 0.3:
@@ -342,7 +348,7 @@ class JSONMutator(BaseMutator):
             # Recurse into existing values
             for value in obj.values():
                 if isinstance(value, (dict, list)):
-                    self._add_nested_objects_recursive(value)
+                    self._add_nested_objects_recursive(value, depth + 1, max_depth)
 
         elif isinstance(obj, list):
             # Add nested objects to list
@@ -355,7 +361,7 @@ class JSONMutator(BaseMutator):
             # Recurse into list items
             for item in obj:
                 if isinstance(item, (dict, list)):
-                    self._add_nested_objects_recursive(item)
+                    self._add_nested_objects_recursive(item, depth + 1, max_depth)
 
     def _duplicate_keys(self) -> bytes:
         """Create JSON with duplicate keys (last one wins)."""
@@ -378,12 +384,15 @@ class JSONMutator(BaseMutator):
             return self.original_data
 
         mutated_json = self._deep_copy_json(self._parsed_json)
-        self._remove_fields_recursive(mutated_json)
+        self._remove_fields_recursive(mutated_json, max_depth=3)
 
         return self._serialize_json(mutated_json)
 
-    def _remove_fields_recursive(self, obj: Any) -> None:
+    def _remove_fields_recursive(self, obj: Any, depth: int = 0, max_depth: int = 3) -> None:
         """Recursively remove fields."""
+        if depth >= max_depth:
+            return
+
         if isinstance(obj, dict):
             keys = list(obj.keys())
             # Remove 30-70% of keys
@@ -398,7 +407,7 @@ class JSONMutator(BaseMutator):
             # Recurse into remaining values
             for value in obj.values():
                 if isinstance(value, (dict, list)):
-                    self._remove_fields_recursive(value)
+                    self._remove_fields_recursive(value, depth + 1, max_depth)
 
         elif isinstance(obj, list):
             # Remove 30-70% of list items
@@ -413,7 +422,7 @@ class JSONMutator(BaseMutator):
             # Recurse into remaining items
             for item in obj:
                 if isinstance(item, (dict, list)):
-                    self._remove_fields_recursive(item)
+                    self._remove_fields_recursive(item, depth + 1, max_depth)
 
     def _reorder_arrays(self) -> bytes:
         """Randomly reorder arrays in the JSON."""
@@ -421,22 +430,25 @@ class JSONMutator(BaseMutator):
             return self.original_data
 
         mutated_json = self._deep_copy_json(self._parsed_json)
-        self._reorder_arrays_recursive(mutated_json)
+        self._reorder_arrays_recursive(mutated_json, max_depth=3)
 
         return self._serialize_json(mutated_json)
 
-    def _reorder_arrays_recursive(self, obj: Any) -> None:
+    def _reorder_arrays_recursive(self, obj: Any, depth: int = 0, max_depth: int = 3) -> None:
         """Recursively reorder arrays."""
+        if depth >= max_depth:
+            return
+
         if isinstance(obj, dict):
             for value in obj.values():
                 if isinstance(value, (dict, list)):
-                    self._reorder_arrays_recursive(value)
+                    self._reorder_arrays_recursive(value, depth + 1, max_depth)
 
         elif isinstance(obj, list):
             self.random.shuffle(obj)
             for item in obj:
                 if isinstance(item, (dict, list)):
-                    self._reorder_arrays_recursive(item)
+                    self._reorder_arrays_recursive(item, depth + 1, max_depth)
 
     def _nest_arrays(self) -> bytes:
         """Create nested array structures."""
@@ -444,16 +456,19 @@ class JSONMutator(BaseMutator):
             return self.original_data
 
         mutated_json = self._deep_copy_json(self._parsed_json)
-        self._nest_arrays_recursive(mutated_json)
+        self._nest_arrays_recursive(mutated_json, max_depth=2)
 
         return self._serialize_json(mutated_json)
 
-    def _nest_arrays_recursive(self, obj: Any) -> None:
+    def _nest_arrays_recursive(self, obj: Any, depth: int = 0, max_depth: int = 2) -> None:
         """Recursively create nested arrays."""
+        if depth >= max_depth:
+            return
+
         if isinstance(obj, dict):
             for value in obj.values():
                 if isinstance(value, (dict, list)):
-                    self._nest_arrays_recursive(value)
+                    self._nest_arrays_recursive(value, depth + 1, max_depth)
 
         elif isinstance(obj, list):
             if self.random.random() < 0.3:
@@ -464,7 +479,7 @@ class JSONMutator(BaseMutator):
             else:
                 for item in obj:
                     if isinstance(item, (dict, list)):
-                        self._nest_arrays_recursive(item)
+                        self._nest_arrays_recursive(item, depth + 1, max_depth)
 
     def _expand_structure(self) -> bytes:
         """Expand the JSON structure with more data."""
@@ -474,12 +489,15 @@ class JSONMutator(BaseMutator):
         mutated_json = self._deep_copy_json(self._parsed_json)
 
         # Add more fields to all objects
-        self._expand_structure_recursive(mutated_json)
+        self._expand_structure_recursive(mutated_json, max_depth=2)
 
         return self._serialize_json(mutated_json)
 
-    def _expand_structure_recursive(self, obj: Any) -> None:
+    def _expand_structure_recursive(self, obj: Any, depth: int = 0, max_depth: int = 2) -> None:
         """Recursively expand the structure."""
+        if depth >= max_depth:
+            return
+
         if isinstance(obj, dict):
             # Add 3-10 new fields
             num_to_add = self.random.randint(3, 10)
@@ -488,7 +506,7 @@ class JSONMutator(BaseMutator):
 
             for value in obj.values():
                 if isinstance(value, (dict, list)):
-                    self._expand_structure_recursive(value)
+                    self._expand_structure_recursive(value, depth + 1, max_depth)
 
         elif isinstance(obj, list):
             # Add 3-10 new items
@@ -498,7 +516,7 @@ class JSONMutator(BaseMutator):
 
             for item in obj:
                 if isinstance(item, (dict, list)):
-                    self._expand_structure_recursive(item)
+                    self._expand_structure_recursive(item, depth + 1, max_depth)
 
     def _shrink_structure(self) -> bytes:
         """Shrink the JSON structure."""
@@ -518,7 +536,7 @@ class JSONMutator(BaseMutator):
                 new_dict[key] = mutated_json[key]
                 # Recursively shrink nested structures
                 if isinstance(new_dict[key], (dict, list)):
-                    self._shrink_structure_recursive(new_dict[key])
+                    self._shrink_structure_recursive(new_dict[key], max_depth=3)
 
             mutated_json = new_dict
 
@@ -531,14 +549,17 @@ class JSONMutator(BaseMutator):
                 new_list.append(mutated_json[idx])
                 # Recursively shrink nested structures
                 if isinstance(new_list[-1], (dict, list)):
-                    self._shrink_structure_recursive(new_list[-1])
+                    self._shrink_structure_recursive(new_list[-1], max_depth=3)
 
             mutated_json = new_list
 
         return self._serialize_json(mutated_json)
 
-    def _shrink_structure_recursive(self, obj: Any) -> None:
+    def _shrink_structure_recursive(self, obj: Any, depth: int = 0, max_depth: int = 3) -> None:
         """Recursively shrink nested structures."""
+        if depth >= max_depth:
+            return
+
         if isinstance(obj, dict):
             keys = list(obj.keys())
             if len(keys) > 1:
@@ -549,7 +570,7 @@ class JSONMutator(BaseMutator):
                 for key in keys_to_keep:
                     new_dict[key] = obj[key]
                     if isinstance(new_dict[key], (dict, list)):
-                        self._shrink_structure_recursive(new_dict[key])
+                        self._shrink_structure_recursive(new_dict[key], depth + 1, max_depth)
 
                 obj.clear()
                 obj.update(new_dict)
@@ -562,7 +583,7 @@ class JSONMutator(BaseMutator):
                 new_list = [obj[i] for i in indices_to_keep]
                 for item in new_list:
                     if isinstance(item, (dict, list)):
-                        self._shrink_structure_recursive(item)
+                        self._shrink_structure_recursive(item, depth + 1, max_depth)
 
                 obj.clear()
                 obj.extend(new_list)
@@ -574,7 +595,7 @@ class JSONMutator(BaseMutator):
 
         # Create a deeply nested structure
         nested = self._get_random_value()
-        depth = self.random.randint(10, 50)
+        depth = self.random.randint(3, 10)  # Reduced from 10-50 to 3-10
 
         for i in range(depth):
             if self.random.random() < 0.5:
@@ -592,7 +613,7 @@ class JSONMutator(BaseMutator):
 
         # Create a wide structure with many fields
         wide_obj = {}
-        num_fields = self.random.randint(100, 1000)
+        num_fields = self.random.randint(10, 100)  # Reduced from 100-1000 to 10-100
 
         for i in range(num_fields):
             if self.random.random() < 0.7:

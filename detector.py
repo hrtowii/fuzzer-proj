@@ -41,23 +41,25 @@ class InputDetector:
         except Exception as e:
             raise ValueError(f"Could not read sample file: {e}")
 
-        # Debug: print content info
-        content_str = content.decode("utf-8", errors="ignore")
-        print(f"[DEBUG] File: {file_path.name}, Content: {repr(content_str[:50])}, Extension: {file_path.suffix}")
+        # Check filename first (highest priority)
+        format_result = self._detect_by_filename(file_path.name)
+        if format_result:
+            # print(f"[DEBUG] Detected by filename: {format_result}")
+            return format_result
 
         format_result = self._detect_by_magic_numbers(content)
         if format_result:
-            print(f"[DEBUG] Detected by magic numbers: {format_result}")
+            # print(f"[DEBUG] Detected by magic numbers: {format_result}")
             return format_result
 
         format_result = self._detect_by_content(content, file_path.suffix)
         if format_result:
-            print(f"[DEBUG] Detected by content: {format_result}")
+            # print(f"[DEBUG] Detected by content: {format_result}")
             return format_result
 
         format_result = self._detect_by_extension(file_path.suffix)
         if format_result:
-            print(f"[DEBUG] Detected by extension: {format_result}")
+            # print(f"[DEBUG] Detected by extension: {format_result}")
             return format_result
 
         print(f"[DEBUG] Defaulting to PLAINTEXT")
@@ -92,9 +94,9 @@ class InputDetector:
 
             # Try XML (only valid XML)
             if content_str.startswith("<?xml") or (
-                content_str.startswith("<") and
-                content_str.find(">") > 1 and
-                content_str.find("</") > content_str.find(">")  # Has closing tag
+                content_str.startswith("<")
+                and content_str.find(">") > 1
+                and content_str.find("</") > content_str.find(">")  # Has closing tag
             ):
                 try:
                     ET.fromstring(content_str)
@@ -128,6 +130,34 @@ class InputDetector:
         }
 
         return extension_map.get(extension)
+
+    def _detect_by_filename(self, filename: str) -> Optional[InputFormat]:
+        """Detect format by checking filename patterns."""
+        filename = filename.lower()
+
+        # Extract base name without extension
+        base_name = Path(filename).stem
+
+        # Check for format prefixes in filename (e.g., csv1, json1, plaintext1, etc.)
+        filename_patterns = {
+            "json": InputFormat.JSON,
+            "xml": InputFormat.XML,
+            "csv": InputFormat.CSV,
+            "jpeg": InputFormat.JPEG,
+            "jpg": InputFormat.JPEG,
+            "elf": InputFormat.ELF,
+            "pdf": InputFormat.PDF,
+            "plaintext": InputFormat.PLAINTEXT,
+            "plain": InputFormat.PLAINTEXT,
+            "text": InputFormat.PLAINTEXT,
+        }
+
+        # Check if filename starts with any of the format patterns
+        for prefix, format_type in filename_patterns.items():
+            if base_name.startswith(prefix):
+                return format_type
+
+        return None
 
     def _looks_like_csv(self, content: str) -> bool:
         """Heuristic check if content looks like CSV."""
@@ -273,4 +303,3 @@ class InputDetector:
         return format_info.get(
             input_format, {"name": "Unknown", "description": "Unsupported format"}
         )
-
