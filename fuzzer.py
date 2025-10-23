@@ -38,6 +38,7 @@ def execute_mutation_worker(
     mutation_data: bytes,
     timeout_per_execution: int,
     mutation_description: str,
+    shutdown_event=None,
 ) -> Dict[str, Any]:
     """
     Worker function that executes a single mutation in a separate process.
@@ -47,11 +48,21 @@ def execute_mutation_worker(
         mutation_data: The mutated input data
         timeout_per_execution: Timeout for each execution
         mutation_description: Description of the mutation
+        shutdown_event: Threading event for graceful shutdown
 
     Returns:
         Dictionary containing execution results
     """
     from harness import Harness
+
+    # Check for shutdown signal before starting expensive work
+    if shutdown_event and shutdown_event.is_set():
+        return {
+            "success": False,
+            "error": "Shutdown requested",
+            "mutation_description": mutation_description,
+            "input_size": len(mutation_data) if mutation_data else 0,
+        }
 
     try:
         # Debug: Print first 20 bytes of received mutation data (only for first few calls)
@@ -228,11 +239,12 @@ class Fuzzer:
         mutation_count = 0
         crash_count = 0
         unique_crash_count = 0
+        stop_after_unique_crash = True  # Stop after finding first unique crash
 
         # Thread-safe counters and result collection
-        mutation_counter = {"value": 0}
-        crash_counter = {"value": 0}
-        unique_crash_counter = {"value": 0}
+        # Separate locks for different resources to reduce contention
+        counter_lock = threading.Lock()
+        crash_lock = threading.Lock()
         result_lock = threading.Lock()
 
         print(
@@ -241,6 +253,7 @@ class Fuzzer:
 
         # Determine optimal number of worker threads for no-GIL Python 3.14
         # Use 2x CPU cores for maximum parallelism with no-GIL
+        # But be conservative when running multiple binaries in parallel
         max_workers = min(
             self.config.parallel_threads, 16
         )  # Cap at 16 threads per binary for 8-core system
@@ -252,14 +265,13 @@ class Fuzzer:
             while (
                 not self.shutdown_event.is_set()
                 and (time.time() - start_time) < max_execution_time
-                and unique_crash_count < 1
+                and (not stop_after_unique_crash or unique_crash_count == 0)
             ):
                 # Generate mutations and submit to workers
                 try:
-                    # Submit larger mutation batches for no-GIL threading (more efficient than processes)
-                    batch_size = (
-                        max_workers * 4
-                    )  # Larger batches for better thread utilization
+                    # Submit mutation batches for no-GIL threading with reduced size to prevent overwhelming
+                    # Use smaller batches when running multiple binaries to reduce system load
+                    batch_size = max_workers * 1  # Conservative batching for better resource management
 
                     for _ in range(batch_size):
                         if (time.time() - start_time) >= max_execution_time:
@@ -277,6 +289,7 @@ class Fuzzer:
                                 mutated_data,
                                 self.config.timeout_per_execution,
                                 mutation_description,
+                                self.shutdown_event,
                             )
                             futures.append(future)
 
@@ -284,19 +297,14 @@ class Fuzzer:
                             print(f"Error generating mutation: {e}")
                             continue
 
-                    # Process completed futures
-                    completed_futures = []
-                    for future in futures:
-                        if future.done():
-                            completed_futures.append(future)
-
-                    for future in completed_futures:
+                    # Process completed futures using as_completed for proper async handling
+                    completed_count = 0
+                    for future in as_completed(futures[:batch_size]):  # Only process current batch
                         try:
-                            result = future.result()
+                            result = future.result(timeout=self.config.timeout_per_execution + 5)
 
-                            with result_lock:
-                                mutation_counter["value"] += 1
-                                mutation_count = mutation_counter["value"]
+                            with counter_lock:
+                                mutation_count += 1
 
                             if result["success"]:
                                 execution_result = result["execution_result"]
@@ -311,21 +319,17 @@ class Fuzzer:
                                 )
 
                                 if execution_result.crashed:
-                                    with result_lock:
-                                        crash_counter["value"] += 1
-                                        crash_count = crash_counter["value"]
+                                    with crash_lock:
+                                        crash_count += 1
 
                                     crash_signature = self._generate_crash_signature(
                                         execution_result
                                     )
 
                                     if crash_signature not in self.crash_signatures:
-                                        with result_lock:
+                                        with crash_lock:
                                             self.crash_signatures.add(crash_signature)
-                                            unique_crash_counter["value"] += 1
-                                            unique_crash_count = unique_crash_counter[
-                                                "value"
-                                            ]
+                                            unique_crash_count += 1
                                             fuzz_result.is_unique_crash = True
 
                                         print(
@@ -340,14 +344,14 @@ class Fuzzer:
                                         print(
                                             f"    Return code: {execution_result.return_code}"
                                         )
-                                        print(
-                                            f"[{self.session.session_id}] Stopping fuzzing after finding 1 unique crash"
-                                        )
-                                        break
+
+                                        # Stop fuzzing after finding first unique crash
+                                        if stop_after_unique_crash:
+                                            print(f"[{self.session.session_id}] ⏹️ Stopping fuzzing after finding unique crash")
+                                            self.shutdown_event.set()  # Signal all threads to stop
+                                            break
                                     else:
-                                        if (
-                                            mutation_count % 10 == 0
-                                        ):  # Reduce duplicate crash spam
+                                        if crash_count % 10 == 0:  # Reduce duplicate crash spam
                                             print(
                                                 f"[{self.session.session_id}] 💥 Crash found (duplicate)"
                                             )
@@ -358,11 +362,14 @@ class Fuzzer:
                                     f"Error in worker process: {result.get('error', 'Unknown error')}"
                                 )
 
+                            completed_count += 1
+
                         except Exception as e:
                             print(f"Error processing future result: {e}")
 
-                    # Remove completed futures from list
-                    futures = [f for f in futures if f not in completed_futures]
+                    # Remove processed futures from the list
+                    if completed_count > 0:
+                        futures = futures[completed_count:]
 
                     # Progress reporting every 5 seconds
                     current_time = time.time()
@@ -383,48 +390,70 @@ class Fuzzer:
                     print(f"Error in main fuzzing loop: {e}")
                     continue
 
-            # Wait for any remaining futures to complete
-            for future in futures:
+            # Wait for any remaining futures to complete with timeout to prevent hanging
+            if futures:
+                print(f"[{self.session.session_id}] Waiting for {len(futures)} remaining tasks to complete...")
                 try:
-                    result = future.result(
-                        timeout=self.config.timeout_per_execution + 5
-                    )
+                    # Use as_completed with timeout for better async handling
+                    for future in as_completed(futures, timeout=30):  # 30 second timeout for cleanup
+                        try:
+                            result = future.result(timeout=self.config.timeout_per_execution + 5)
 
-                    if result["success"]:
-                        with result_lock:
-                            mutation_counter["value"] += 1
-                            mutation_count = mutation_counter["value"]
+                            if result["success"]:
+                                with counter_lock:
+                                    mutation_count += 1
 
-                        execution_result = result["execution_result"]
+                                execution_result = result["execution_result"]
 
-                        fuzz_result = FuzzResult(
-                            input_data=result["input_data"],
-                            execution_result=execution_result,
-                            mutation_description=result["mutation_description"],
-                            input_size=result["input_size"],
-                            is_crash=result["is_crash"],
-                            is_unique_crash=False,
-                        )
+                                fuzz_result = FuzzResult(
+                                    input_data=result["input_data"],
+                                    execution_result=execution_result,
+                                    mutation_description=result["mutation_description"],
+                                    input_size=result["input_size"],
+                                    is_crash=result["is_crash"],
+                                    is_unique_crash=False,
+                                )
 
-                        if execution_result.crashed:
-                            with result_lock:
-                                crash_counter["value"] += 1
-                                crash_count = crash_counter["value"]
+                                if execution_result.crashed:
+                                    with crash_lock:
+                                        crash_count += 1
 
-                            crash_signature = self._generate_crash_signature(
-                                execution_result
-                            )
+                                    crash_signature = self._generate_crash_signature(
+                                        execution_result
+                                    )
 
-                            if crash_signature not in self.crash_signatures:
-                                with result_lock:
-                                    self.crash_signatures.add(crash_signature)
-                                    unique_crash_counter["value"] += 1
-                                    unique_crash_count = unique_crash_counter["value"]
-                                    fuzz_result.is_unique_crash = True
+                                    if crash_signature not in self.crash_signatures:
+                                        with crash_lock:
+                                            self.crash_signatures.add(crash_signature)
+                                            unique_crash_count += 1
+                                            fuzz_result.is_unique_crash = True
 
-                        self.session.add_result(fuzz_result)
-                except Exception as e:
-                    print(f"Error processing final future: {e}")
+                                        print(
+                                            f"[{self.session.session_id}] 🚨 UNIQUE CRASH FOUND! (cleanup)"
+                                        )
+                                        print(
+                                            f"    Mutation: {fuzz_result.mutation_description}"
+                                        )
+                                        print(
+                                            f"    Crash type: {execution_result.crash_type}"
+                                        )
+                                        print(
+                                            f"    Return code: {execution_result.return_code}"
+                                        )
+
+                                        # Stop fuzzing after finding first unique crash
+                                        if stop_after_unique_crash:
+                                            print(f"[{self.session.session_id}] ⏹️ Stopping fuzzing after finding unique crash (cleanup)")
+
+                                self.session.add_result(fuzz_result)
+                        except Exception as e:
+                            print(f"Error processing final future: {e}")
+
+                except TimeoutError:
+                    print(f"[{self.session.session_id}] Warning: Some tasks did not complete within timeout, proceeding with results collected")
+                    # Cancel remaining futures to prevent hanging
+                    for future in futures:
+                        future.cancel()
 
         # Final statistics
         elapsed = time.time() - start_time
@@ -524,7 +553,7 @@ class Fuzzer:
         self, binary_list: List[str]
     ) -> Dict[str, FuzzerSession]:
         """
-        Fuzz multiple binaries in parallel using ThreadPoolExecutor.
+        Fuzz multiple binaries either sequentially or in parallel based on configuration.
 
         Args:
             binary_list: List of (binary_path, sample_input_path) tuples
@@ -532,35 +561,34 @@ class Fuzzer:
         Returns:
             Dictionary mapping binary paths to their sessions
         """
+        execution_mode = "sequentially" if self.config.sequential_binary_fuzzing else "in parallel"
         print(f"\n{'=' * 80}")
-        print(f"Starting parallel fuzzing of {len(binary_list)} binaries")
+        print(f"Starting {execution_mode} fuzzing of {len(binary_list)} binaries")
         print(f"{'=' * 80}")
 
         results = {}
 
-        # Determine optimal number of parallel binaries for no-GIL Python 3.14
-        # Use more concurrent binaries with threading (no process overhead)
-        max_concurrent_binaries = min(
-            len(binary_list), 8
-        )  # Up to 8 binaries on 8-core system
-
-        with ThreadPoolExecutor(max_workers=max_concurrent_binaries) as executor:
-            # Submit all binary fuzzing tasks
-            future_to_binary = {
-                executor.submit(self.fuzz_single_binary, binary_pair): binary_pair
-                for binary_pair in binary_list
-            }
-
-            # Process results as they complete
+        if self.config.sequential_binary_fuzzing:
+            # Sequential execution - each binary gets dedicated CPU time
             completed_count = 0
-            for future in as_completed(future_to_binary):
-                binary_path, session, error = future.result()
+            for binary_pair in binary_list:
+                if self.shutdown_event.is_set():
+                    print("Shutdown requested, stopping remaining binaries...")
+                    break
+
                 completed_count += 1
+                binary_path, sample_input_path = binary_pair
 
                 print(f"\n{'=' * 60}")
-                print(
-                    f"Completed binary {completed_count}/{len(binary_list)}: {binary_path}"
-                )
+                print(f"Fuzzing binary {completed_count}/{len(binary_list)}: {binary_path}")
+                print(f"{'=' * 60}")
+
+                # Create a new fuzzer instance for each binary to avoid state conflicts
+                binary_fuzzer = Fuzzer(self.config)
+                binary_path_result, session, error = binary_fuzzer.fuzz_single_binary(binary_pair)
+
+                print(f"\n{'=' * 60}")
+                print(f"Completed binary {completed_count}/{len(binary_list)}: {binary_path}")
                 print(f"{'=' * 60}")
 
                 if session:
@@ -580,10 +608,189 @@ class Fuzzer:
                 else:
                     print(f"Error fuzzing {binary_path}: {error}")
 
+        elif self.config.parallel_batch_size > 0 and self.config.parallel_batch_size < len(binary_list):
+            # Batch parallel execution - run small groups in parallel
+            batch_size = self.config.parallel_batch_size
+            total_batches = (len(binary_list) + batch_size - 1) // batch_size
+
+            print(f"Running {len(binary_list)} binaries in {total_batches} batches of up to {batch_size} each")
+
+            for batch_num in range(total_batches):
+                if self.shutdown_event.is_set():
+                    print("Shutdown requested, stopping remaining batches...")
+                    break
+
+                start_idx = batch_num * batch_size
+                end_idx = min(start_idx + batch_size, len(binary_list))
+                batch_pairs = binary_list[start_idx:end_idx]
+
+                print(f"\n{'=' * 80}")
+                print(f"Starting batch {batch_num + 1}/{total_batches}: binaries {start_idx + 1}-{end_idx}")
+                print(f"{'=' * 80}")
+
+                # Process this batch in parallel using the existing parallel logic
+                batch_results = self._process_binary_batch(batch_pairs)
+                results.update(batch_results)
+
+                print(f"\n{'=' * 80}")
+                print(f"Completed batch {batch_num + 1}/{total_batches}")
+                print(f"{'=' * 80}")
+
+        else:
+            # Full parallel execution with independent fuzzer instances
+            # Determine optimal number of parallel binaries for no-GIL Python 3.14
+            # Use more concurrent binaries with threading (no process overhead)
+            max_concurrent_binaries = min(
+                len(binary_list), 8
+            )  # Up to 8 binaries on 8-core system
+
+            def fuzz_binary_independent(binary_pair):
+                """Create independent fuzzer instance for each binary to avoid state conflicts."""
+                binary_path, sample_input_path = binary_pair
+                try:
+                    # Create adjusted config for parallel execution to maintain mutation rate
+                    try:
+                        adjusted_config = self.config.model_copy(deep=True)
+                    except AttributeError:
+                        # Fallback for older pydantic versions
+                        import copy
+                        adjusted_config = copy.deepcopy(self.config)
+
+                    # Reduce threads per binary when running multiple binaries in parallel
+                    # This prevents CPU oversaturation and maintains good mutation rates
+                    if len(binary_list) > 1:
+                        # Allocate 2-4 threads per binary, but ensure at least 2
+                        threads_per_binary = max(2, min(4, self.config.parallel_threads // max(1, len(binary_list) // 2)))
+                        adjusted_config.parallel_threads = threads_per_binary
+
+                    # Create fresh fuzzer instance with adjusted config
+                    binary_fuzzer = Fuzzer(adjusted_config)
+
+                    # Log thread allocation for debugging
+                    if len(binary_list) > 1:
+                        print(f"[DEBUG] Starting {Path(binary_path).name} with {adjusted_config.parallel_threads} threads (original: {self.config.parallel_threads})")
+
+                    session = binary_fuzzer.fuzz_binary(binary_path, sample_input_path)
+                    return (binary_path, session, None)
+                except Exception as e:
+                    return (binary_path, None, str(e))
+
+            with ThreadPoolExecutor(max_workers=max_concurrent_binaries) as executor:
+                # Submit all binary fuzzing tasks with independent fuzzer instances
+                future_to_binary = {
+                    executor.submit(fuzz_binary_independent, binary_pair): binary_pair
+                    for binary_pair in binary_list
+                }
+
+                # Process results as they complete
+                completed_count = 0
+                for future in as_completed(future_to_binary):
+                    binary_path, session, error = future.result()
+                    completed_count += 1
+
+                    print(f"\n{'=' * 60}")
+                    print(
+                        f"Completed binary {completed_count}/{len(binary_list)}: {binary_path}"
+                    )
+                    print(f"{'=' * 60}")
+
+                    if session:
+                        results[binary_path] = session
+
+                        # Print summary for this binary
+                        print(f"\nSummary for {binary_path}:")
+                        print(f"  Mutations: {session.stats.total_mutations}")
+                        print(f"  Crashes: {session.stats.crashes_found}")
+                        print(f"  Unique crashes: {session.stats.unique_crashes}")
+                        print(
+                            f"  Execution time: {session.stats.execution_time_total:.2f}s"
+                        )
+                        print(
+                            f"  Average mutation rate: {session.stats.mutations_per_second:.1f} mutations/sec"
+                        )
+                    else:
+                        print(f"Error fuzzing {binary_path}: {error}")
+
         print(f"\n{'=' * 80}")
-        print(f"All binaries fuzzed in parallel!")
+        print(f"All binaries fuzzed {execution_mode}!")
         print(f"Successfully fuzzed: {len(results)}/{len(binary_list)} binaries")
         print(f"{'=' * 80}")
+
+        return results
+
+    def _process_binary_batch(self, binary_pairs: List[tuple]) -> Dict[str, FuzzerSession]:
+        """Process a batch of binaries in parallel with optimized thread allocation."""
+        results = {}
+
+        def fuzz_binary_independent(binary_pair):
+            """Create independent fuzzer instance for each binary to avoid state conflicts."""
+            binary_path, sample_input_path = binary_pair
+            try:
+                # Create adjusted config for parallel execution to maintain mutation rate
+                try:
+                    adjusted_config = self.config.model_copy(deep=True)
+                except AttributeError:
+                    # Fallback for older pydantic versions
+                    import copy
+                    adjusted_config = copy.deepcopy(self.config)
+
+                # For batch processing, give each binary more threads since fewer binaries compete
+                if len(binary_pairs) > 1:
+                    # Calculate optimal threads per binary for this batch size
+                    total_available_threads = self.config.parallel_threads
+                    threads_per_binary = max(2, total_available_threads // len(binary_pairs))
+                    adjusted_config.parallel_threads = threads_per_binary
+
+                # Create fresh fuzzer instance with adjusted config
+                binary_fuzzer = Fuzzer(adjusted_config)
+
+                # Log thread allocation for debugging
+                if len(binary_pairs) > 1:
+                    print(f"[DEBUG] Starting {Path(binary_path).name} with {adjusted_config.parallel_threads} threads (batch of {len(binary_pairs)})")
+
+                session = binary_fuzzer.fuzz_binary(binary_path, sample_input_path)
+                return (binary_path, session, None)
+            except Exception as e:
+                return (binary_path, None, str(e))
+
+        # Determine optimal number of concurrent binaries for this batch
+        max_concurrent_binaries = min(len(binary_pairs), 8)
+
+        with ThreadPoolExecutor(max_workers=max_concurrent_binaries) as executor:
+            # Submit all binary fuzzing tasks with independent fuzzer instances
+            future_to_binary = {
+                executor.submit(fuzz_binary_independent, binary_pair): binary_pair
+                for binary_pair in binary_pairs
+            }
+
+            # Process results as they complete
+            completed_count = 0
+            for future in as_completed(future_to_binary):
+                binary_path, session, error = future.result()
+                completed_count += 1
+
+                print(f"\n{'=' * 60}")
+                print(
+                    f"Completed binary {completed_count}/{len(binary_pairs)} in batch: {binary_path}"
+                )
+                print(f"{'=' * 60}")
+
+                if session:
+                    results[binary_path] = session
+
+                    # Print summary for this binary
+                    print(f"\nSummary for {binary_path}:")
+                    print(f"  Mutations: {session.stats.total_mutations}")
+                    print(f"  Crashes: {session.stats.crashes_found}")
+                    print(f"  Unique crashes: {session.stats.unique_crashes}")
+                    print(
+                        f"  Execution time: {session.stats.execution_time_total:.2f}s"
+                    )
+                    print(
+                        f"  Average mutation rate: {session.stats.mutations_per_second:.1f} mutations/sec"
+                    )
+                else:
+                    print(f"Error fuzzing {binary_path}: {error}")
 
         return results
 
@@ -641,3 +848,6 @@ class Fuzzer:
         """Shutdown the fuzzer gracefully."""
         print("Shutting down fuzzer...")
         self.shutdown_event.set()
+        # Add a small delay to allow threads to notice the shutdown event
+        import time
+        time.sleep(0.1)

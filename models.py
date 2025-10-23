@@ -70,6 +70,8 @@ class FuzzerConfig(BaseModel):
     min_file_size: int = Field(default=0, ge=0)
     preserve_working_files: bool = Field(default=False)
     output_directory: str = Field(default="./fuzzer_output")
+    sequential_binary_fuzzing: bool = Field(default=False, description="Whether to fuzz binaries sequentially (True) or in parallel (False)")
+    parallel_batch_size: int = Field(default=2, description="Number of binaries to run in parallel in batch mode")
 
 
 class MutationStats(BaseModel):
@@ -79,6 +81,7 @@ class MutationStats(BaseModel):
     crashes_found: int = 0
     unique_crashes: int = 0
     execution_time_total: float = 0.0
+    individual_execution_time_total: float = 0.0  # Sum of individual execution times
     average_execution_time: float = 0.0
     mutations_per_second: float = 0.0
 
@@ -105,16 +108,28 @@ class FuzzerSession(BaseModel):
             if result.is_unique_crash:
                 self.stats.unique_crashes += 1
 
-        self.stats.execution_time_total += result.execution_result.execution_time
+        # Track individual execution times for calculating average execution time
+        self.stats.individual_execution_time_total += result.execution_result.execution_time
         if self.stats.total_mutations > 0:
             self.stats.average_execution_time = (
-                self.stats.execution_time_total / self.stats.total_mutations
+                self.stats.individual_execution_time_total / self.stats.total_mutations
             )
 
     def finish_session(self) -> None:
         """Mark the session as finished."""
         self.end_time = datetime.now()
-        if self.stats.execution_time_total > 0:
+
+        # Calculate total wall-clock time for the session
+        if self.end_time and self.start_time:
+            total_session_time = (self.end_time - self.start_time).total_seconds()
+        else:
+            total_session_time = 0.0
+
+        # Update execution_time_total to be the wall-clock time, not sum of individual execution times
+        self.stats.execution_time_total = total_session_time
+
+        # Calculate mutations per second using wall-clock time
+        if total_session_time > 0:
             self.stats.mutations_per_second = (
-                self.stats.total_mutations / self.stats.execution_time_total
+                self.stats.total_mutations / total_session_time
             )

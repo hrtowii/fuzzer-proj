@@ -103,6 +103,19 @@ Examples:
         help="Force input format detection (auto-detected if not specified)",
     )
 
+    parser.add_argument(
+        "--sequential",
+        action="store_true",
+        help="Run binaries sequentially instead of in parallel (default: parallel)",
+    )
+
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=2,
+        help="Number of binaries to run in parallel (default: 2, use -1 for all at once)",
+    )
+
     return parser.parse_args()
 
 
@@ -224,6 +237,8 @@ def main():
         max_file_size=args.max_file_size,
         output_directory=args.output,
         preserve_working_files=args.preserve_files,
+        sequential_binary_fuzzing=args.sequential,
+        parallel_batch_size=args.batch_size if args.batch_size != -1 else len(binary_list) if 'binary_list' in locals() else 999,
     )
 
     fuzzer = Fuzzer(config)
